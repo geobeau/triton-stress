@@ -23,7 +23,9 @@ func TestHTTPEndToEndShortRamp(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run(context.Background(), []string{"--model", "m", "--protocol", "http", "--target", f.Addr, "--connections", "6", "--workers", "2",
 		"--batch-size", "2", "--validate", "--warmup", "300ms", "--start-rate", "200", "--slope", "400", "--max-rate", "600",
-		"--interval", "200ms", "--metrics-addr", "127.0.0.1:0", "--out-dir", dir, "--request-log-every", "10"}, &out, &errb)
+		"--interval", "200ms", "--metrics-addr", "127.0.0.1:0", "--out-dir", dir, "--request-log-every", "10",
+		// Send delay measures the client host, which a loaded CI runner under -race cannot hold to 1 ms.
+		"--guard-send-delay", "off"}, &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
