@@ -1,0 +1,5 @@
+/runs
+/bin
+/build
+*.test
+*.out
