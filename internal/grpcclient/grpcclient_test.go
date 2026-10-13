@@ -11,6 +11,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -339,31 +340,43 @@ func TestReconnectAndStateEvents(t *testing.T) {
 			mu.Unlock()
 		}
 	})
-	waitReady(t, c)
-	b.stop()
-	deadline := time.Now().Add(5 * time.Second)
-	for c.Ready() && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+	// The events lag grpc-go's own state and coalesce short-lived states, so each step
+	// waits for what the events show, not for c.Ready or WaitReady.
+	waitEvents := func(what string, ok func(ready int, last connectivity.State) bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+			mu.Lock()
+			ready, last := 0, connectivity.Idle
+			for _, e := range events {
+				if e == connectivity.Ready {
+					ready++
+				}
+				last = e
+			}
+			done, seen := ok(ready, last), slices.Clone(events)
+			mu.Unlock()
+			if done {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("events %v: %s", seen, what)
+			}
+		}
 	}
-	if c.Ready() {
-		t.Fatal("still Ready after the server stopped")
+	waitEvents("never Ready", func(ready int, _ connectivity.State) bool { return ready == 1 })
+	b.stop()
+	waitEvents("still Ready after the server stopped", func(_ int, last connectivity.State) bool { return last != connectivity.Ready })
+	if c.Ready() { // the state is stored before OnState is called
+		t.Fatal("Ready() after the events left Ready")
 	}
 	b.start() // the server comes back: the Conn reconnects by itself
-	waitReady(t, c)
+	waitEvents("not Ready again after the server came back", func(ready int, _ connectivity.State) bool { return ready >= 2 })
+	if !c.Ready() {
+		t.Fatal("not Ready() after the events showed Ready")
+	}
 	_, body, _ := testModelAndBody(t, c, 1)
 	if r := c.Infer(context.Background(), body, time.Second, nil); r.Status != StatusOK {
 		t.Fatal(r.Status.Label())
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	seenReady := 0
-	for _, e := range events {
-		if e == connectivity.Ready {
-			seenReady++
-		}
-	}
-	if seenReady < 2 {
-		t.Fatalf("events %v: expected Ready at least twice", events)
 	}
 }
 
