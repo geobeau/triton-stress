@@ -227,7 +227,7 @@ func TestEndToEndShortRamp(t *testing.T) {
 		"--batch-size", "2", "--validate", "--warmup", "300ms", "--start-rate", "200", "--slope", "400", "--max-rate", "600",
 		"--interval", "200ms", "--metrics-addr", "127.0.0.1:0", "--out-dir", dir, "--request-log-every", "10",
 		// Send delay measures the client host, which a loaded CI runner under -race cannot hold to 1 ms.
-		"--guard-send-delay", "off"}, &out, &errb)
+		"--guard-send-delay", "off", "--guard-achieved", "off", "--guard-latency", "off"}, &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
@@ -270,6 +270,40 @@ func TestEndToEndShortRamp(t *testing.T) {
 	}
 	if math.Abs(ok-460)/460 > 0.05 {
 		t.Fatalf("%v OK, want about 460", ok)
+	}
+}
+
+func TestGuardTripExitsNonZero(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := grpc.NewServer()
+	pb.RegisterGRPCInferenceServiceServer(srv, &fakeTriton{})
+	go func() { _ = srv.Serve(lis) }()
+	defer srv.Stop()
+
+	dir := filepath.Join(t.TempDir(), "run")
+	var out, errb bytes.Buffer
+	code := run(context.Background(), []string{"--model", "m", "--target", lis.Addr().String(),
+		"--connections", "2", "--workers", "1", "--warmup", "0s", "--start-rate", "100", "--slope", "0",
+		"--max-rate", "100", "--duration", "10s", "--interval", "100ms",
+		// A latency no request can meet, so the run trips well before --duration.
+		"--guard-latency", "p50:1ns", "--guard-consecutive", "1",
+		// Send delay measures the client host, which a loaded CI runner cannot hold to 1 ms.
+		"--guard-send-delay", "off",
+		"--metrics-addr", "off", "--out-dir", dir}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2: %s", code, errb.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "events.jsonl"))
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	var stop map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &stop); err != nil {
+		t.Fatal(err)
+	}
+	if stop["event"] != "stop" || stop["reason"] != "guard:latency" {
+		t.Fatalf("%v\n%s", stop, errb.String())
 	}
 }
 

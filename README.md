@@ -147,10 +147,10 @@ tick, never cumulative. A tick's phase is the phase it began in.
 - **Signals.** SIGINT and SIGTERM stop gracefully with reason `interrupted` or `terminated`. A second
   signal gets the default action and kills the process. A signal during startup is also a normal end
   (stop event written, exit 0).
-- **Exit codes.** `0` for every normal end, including guard stops and signals. `1` for fatal errors:
-  bad flags, output directory not creatable or already used, no connection, metadata failure, metrics
-  address not bindable. A guard stop is therefore not a failed process: read the `stop` event.
-  A fatal error after the output directory was opened writes a `stop` event with reason
+- **Exit codes.** `0` when the run completed without a guard tripping, including signals. `2` when a
+  guard tripped: the load was offered and the server did not keep up. `1` for fatal errors: bad flags,
+  output directory not creatable or already used, no connection, metadata failure, metrics address not
+  bindable. A fatal error after the output directory was opened writes a `stop` event with reason
   `fatal:<message>`.
 
 ## Timing definitions
@@ -447,8 +447,8 @@ No manifests or chart ship with triton-stress. Each GitHub release publishes the
 - **SIGTERM** stops the run gracefully (`terminated`): triton-stress drains for up to `--request-timeout`, then
   writes the last tick and the `stop` event. Set `terminationGracePeriodSeconds` above
   `--request-timeout`. A second signal kills it.
-- **Exit code 0** also for a guard stop: a Kubernetes Job succeeds when the ramp saturates Triton. Read the
-  `stop` event, not the exit code, for the outcome.
+- **Exit code 2** when a guard trip ends the run, so a Kubernetes Job fails when the server cannot hold
+  the offered load, and succeeds when the plan completes. The `stop` event carries which guard tripped.
 - **`--target`**: one endpoint per run; use the gRPC (8001) or HTTP (8000) port for `--protocol`.
 
 ## `pkg/tensorgen` for the blackbox-prober probe

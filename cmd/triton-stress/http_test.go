@@ -25,7 +25,7 @@ func TestHTTPEndToEndShortRamp(t *testing.T) {
 		"--batch-size", "2", "--validate", "--warmup", "300ms", "--start-rate", "200", "--slope", "400", "--max-rate", "600",
 		"--interval", "200ms", "--metrics-addr", "127.0.0.1:0", "--out-dir", dir, "--request-log-every", "10",
 		// Send delay measures the client host, which a loaded CI runner under -race cannot hold to 1 ms.
-		"--guard-send-delay", "off"}, &out, &errb)
+		"--guard-send-delay", "off", "--guard-achieved", "off", "--guard-latency", "off"}, &out, &errb)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
@@ -92,6 +92,8 @@ func TestHTTPMetricsLabels(t *testing.T) {
 	go func() {
 		done <- run(ctx, []string{"--model", "m", "--protocol", "http", "--target", f.Addr, "--connections", "2", "--workers", "1",
 			"--warmup", "0s", "--start-rate", "300", "--slope", "0", "--duration", "1500ms", "--interval", "200ms",
+			// Send delay measures the client host, which a loaded CI runner cannot hold to 1 ms.
+			"--guard-send-delay", "off", "--guard-achieved", "off", "--guard-latency", "off",
 			"--metrics-addr", maddr, "--out-dir", dir}, &out, &errb)
 	}()
 	var body string

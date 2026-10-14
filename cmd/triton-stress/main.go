@@ -63,8 +63,8 @@ func (s *syncWriter) Write(b []byte) (int, error) {
 // printf writes to the console. A failed console write has nowhere to be reported.
 func printf(w io.Writer, format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
 
-// run returns the exit code: 0 for every normal end (including guard stops and
-// signals), 1 for a fatal error (bad configuration, no connection, metadata failure,
+// run returns the exit code: 0 when the run completed without a guard tripping, 2 when a
+// guard tripped, 1 for a fatal error (bad configuration, no connection, metadata failure,
 // output files that could not be written).
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int) {
 	stderr = &syncWriter{w: stderr}
@@ -90,24 +90,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (code int
 	}()
 	printf(stderr, "triton-stress: writing to %s\n", dir)
 
-	if err := execute(ctx, cfg, out, stderr); err != nil {
-		reason := "fatal:" + err.Error()
+	reason, err := execute(ctx, cfg, out, stderr)
+	if err != nil {
+		fatalReason := "fatal:" + err.Error()
 		code = 1
 		if ctx.Err() != nil { // a signal during startup is a normal end
-			reason, code = load.ReasonInterrupted, 0
+			fatalReason, code = load.ReasonInterrupted, 0
 			if errors.Is(context.Cause(ctx), load.ErrTerminated) {
-				reason = load.ReasonTerminated
+				fatalReason = load.ReasonTerminated
 			}
 		}
 		if code != 0 {
 			printf(stderr, "triton-stress: fatal: %v\n", err)
 		}
 		if err := out.WriteStop(output.Event{TS: time.Now(), Kind: "stop", Fields: []output.KV{
-			output.Str("reason", reason), output.Rate("offered_rps", 0), output.Int("inflight", 0)}}); err != nil {
+			output.Str("reason", fatalReason), output.Rate("offered_rps", 0), output.Int("inflight", 0)}}); err != nil {
 			printf(stderr, "triton-stress: error: writing the stop event: %v\n", err)
 			code = 1
 		}
 		return code
+	}
+	if strings.HasPrefix(reason, "guard:") {
+		printf(stderr, "triton-stress: guard tripped: %s\n", reason)
+		return 2
 	}
 	return 0
 }
@@ -143,8 +148,9 @@ func (c *clients) total() int {
 }
 
 // execute does the startup (connections, metadata, payload pool) and runs the load. Its
-// error is fatal; a run that ends normally returns nil after writing its stop event.
-func execute(ctx context.Context, cfg *config, out *output.Files, stderr io.Writer) error {
+// error is fatal; a run that ends normally returns its stop reason and a nil error, after
+// writing its stop event.
+func execute(ctx context.Context, cfg *config, out *output.Files, stderr io.Writer) (string, error) {
 	var cl clients
 	defer cl.close()
 	var err error
@@ -154,7 +160,7 @@ func execute(ctx context.Context, cfg *config, out *output.Files, stderr io.Writ
 		err = startGRPC(ctx, cfg, out, stderr, &cl)
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	printDescription(stderr, cfg, cl.model, cl.tpl, cl.pool)
 
@@ -167,21 +173,21 @@ func execute(ctx context.Context, cfg *config, out *output.Files, stderr io.Writ
 		Timeout: cfg.Timeout, Interval: cfg.Interval, Guards: cfg.Guards, LogEvery: cfg.RequestLogEvery,
 	}, deps)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if cfg.MetricsAddr != "" {
 		m := metrics.New(cfg.Protocol, cfg.Model, runner.Stats())
 		srv, err := metrics.Serve(cfg.MetricsAddr, m)
 		if err != nil {
-			return fmt.Errorf("metrics endpoint: %w", err)
+			return "", fmt.Errorf("metrics endpoint: %w", err)
 		}
 		defer func() { _ = srv.Close() }()
 		runner.SetMetrics(m)
 		printf(stderr, "triton-stress: metrics on http://%s/metrics\n", srv.Addr())
 	}
 	printf(stderr, "triton-stress: %d workers, %d connections\n", runner.Workers(), cl.total())
-	_, err = runner.Run(ctx)
-	return err
+	res, err := runner.Run(ctx)
+	return res.Reason, err
 }
 
 // startGRPC connects, reads the model over a regular grpc-go connection (used only here)

@@ -612,6 +612,11 @@ func TestReconnectAfterLossIsImmediate(t *testing.T) {
 	}
 	g, _ := newGroup(t, Options{Target: s.addr(), Dialer: dial, BackoffMin: time.Second, BackoffMax: time.Second}, 0)
 	waitFor(t, "connected", func() bool { return g.Healthy() == 1 })
+	waitFor(t, "the server to register the connection", func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(s.conns) > 0
+	})
 	mu.Lock()
 	n := len(at)
 	mu.Unlock()
