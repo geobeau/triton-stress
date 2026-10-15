@@ -292,6 +292,7 @@ func TestGuardTripExitsNonZero(t *testing.T) {
 		"--guard-latency", "p50:1ns", "--guard-consecutive", "1",
 		// Send delay measures the client host, which a loaded CI runner cannot hold to 1 ms.
 		"--guard-send-delay", "off",
+		"--guard-achieved", "off",
 		"--metrics-addr", "off", "--out-dir", dir}, &out, &errb)
 	if code != 2 {
 		t.Fatalf("exit %d, want 2: %s", code, errb.String())
