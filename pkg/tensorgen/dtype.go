@@ -115,10 +115,15 @@ func (s Spec) String() string {
 // ParseSpec parses "name:DTYPE:d1,d2" (dims comma-separated, each >= 1, batch
 // dimension excluded), the format of triton-stress's --input flag.
 func ParseSpec(s string) (Spec, error) {
-	parts := strings.SplitN(s, ":", 3)
-	if len(parts) != 3 || parts[0] == "" {
+	i := strings.LastIndex(s, ":")
+	j := -1
+	if i > 0 {
+		j = strings.LastIndex(s[:i], ":")
+	}
+	if j <= 0 {
 		return Spec{}, fmt.Errorf("expected name:DTYPE:dims, got %q", s)
 	}
+	parts := []string{s[:j], s[j+1 : i], s[i+1:]}
 	dt, err := ParseDType(parts[1])
 	if err != nil {
 		return Spec{}, fmt.Errorf("%q: %w", s, err)

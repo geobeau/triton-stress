@@ -103,6 +103,9 @@ func TestParseSpec(t *testing.T) {
 	if b, err := ParseSpec("s:BYTES:2"); err != nil || b.DType != Bytes {
 		t.Fatalf("BYTES input: %v", err)
 	}
+	if c, err := ParseSpec("knn/feed/timestamps_sec:0:INT64:100"); err != nil || c.Name != "knn/feed/timestamps_sec:0" || c.DType != Int64 || len(c.Dims) != 1 || c.Dims[0] != 100 {
+		t.Fatalf("name with a colon: %+v, %v", c, err)
+	}
 	for _, bad := range []string{"x:INT32", ":INT32:1", "x:INT32:0", "x:INT32:-1", "x:INT32:a", "x:INT32:", "x:int32:1", "x:INT7:1"} {
 		if _, err := ParseSpec(bad); err == nil {
 			t.Errorf("%q should be rejected", bad)
