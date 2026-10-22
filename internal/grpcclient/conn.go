@@ -138,12 +138,18 @@ func (c *Conn) State() connectivity.State { return connectivity.State(c.state.Lo
 // Ready reports whether the connection can take a request now (lock-free).
 func (c *Conn) Ready() bool { return c.State() == connectivity.Ready }
 
-// WaitReady blocks until the Conn is Ready or ctx ends.
+// WaitReady blocks until Ready reports true or ctx ends. grpc-go can be Ready a
+// moment before the watcher has stored it, so it polls until the watcher catches up.
 func (c *Conn) WaitReady(ctx context.Context) error {
 	for !c.Ready() {
 		s := c.cc.GetState()
 		if s == connectivity.Ready {
-			return nil
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("connection not ready (state %s): %w", s, ctx.Err())
+			case <-time.After(time.Millisecond):
+			}
+			continue
 		}
 		if !c.cc.WaitForStateChange(ctx, s) {
 			return fmt.Errorf("connection not ready (state %s): %w", c.cc.GetState(), ctx.Err())

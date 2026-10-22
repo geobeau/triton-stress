@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/criteo/triton-stress/internal/kservefake"
+	"github.com/criteo/triton-stress/internal/load"
 )
 
 func TestHTTPEndToEndShortRamp(t *testing.T) {
@@ -111,6 +112,116 @@ func TestHTTPMetricsLabels(t *testing.T) {
 	}
 	if code := <-done; code != 0 {
 		t.Fatalf("%d %s", code, errb.String())
+	}
+}
+
+func freeAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	return addr
+}
+
+func status(method, url string) int {
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		return 0
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestControlWaitsForStart(t *testing.T) {
+	f := kservefake.New(t)
+	caddr := freeAddr(t)
+	dir := filepath.Join(t.TempDir(), "run")
+	var out, errb bytes.Buffer
+	done := make(chan int)
+	go func() {
+		done <- run(context.Background(), []string{"--model", "m", "--protocol", "http", "--target", f.Addr, "--connections", "2", "--workers", "1",
+			"--warmup", "0s", "--start-rate", "300", "--slope", "0", "--duration", "1s", "--interval", "200ms",
+			"--guard-send-delay", "off", "--guard-achieved", "off", "--guard-latency", "off",
+			"--metrics-addr", "off", "--control-addr", caddr, "--out-dir", dir}, &out, &errb)
+	}()
+	for i := 0; i < 200 && status(http.MethodGet, "http://"+caddr+"/ready") != http.StatusOK; i++ {
+		<-timeAfter()
+	}
+	if c := status(http.MethodGet, "http://"+caddr+"/ready"); c != http.StatusOK {
+		t.Fatalf("/ready: %d\n%s", c, errb.String())
+	}
+	time.Sleep(500 * time.Millisecond)
+	if n := f.Received.Load(); n != 0 {
+		t.Fatalf("%d requests reached the server before POST /start", n)
+	}
+	select {
+	case code := <-done:
+		t.Fatalf("run ended before POST /start with exit %d", code)
+	default:
+	}
+	if c := status(http.MethodPost, "http://"+caddr+"/start"); c != http.StatusOK {
+		t.Fatalf("/start: %d", c)
+	}
+	if c := status(http.MethodPost, "http://"+caddr+"/start"); c != http.StatusOK {
+		t.Fatalf("second /start: %d", c)
+	}
+	if code := <-done; code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if n := f.Received.Load(); n < 100 {
+		t.Fatalf("%d requests reached the server after POST /start", n)
+	}
+	if !strings.Contains(errb.String(), "waiting for POST /start") {
+		t.Fatal(errb.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "events.jsonl"))
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	var stop map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &stop); err != nil {
+		t.Fatal(err)
+	}
+	if stop["event"] != "stop" || stop["reason"] != load.ReasonDuration {
+		t.Fatalf("%v", stop)
+	}
+}
+
+func TestControlInterruptedWhileWaiting(t *testing.T) {
+	f := kservefake.New(t)
+	caddr := freeAddr(t)
+	dir := filepath.Join(t.TempDir(), "run")
+	var out, errb bytes.Buffer
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	done := make(chan int)
+	go func() {
+		done <- run(ctx, []string{"--model", "m", "--protocol", "http", "--target", f.Addr, "--connections", "2", "--workers", "1",
+			"--metrics-addr", "off", "--control-addr", caddr, "--out-dir", dir}, &out, &errb)
+	}()
+	for i := 0; i < 200 && status(http.MethodGet, "http://"+caddr+"/ready") != http.StatusOK; i++ {
+		<-timeAfter()
+	}
+	cancel(load.ErrTerminated)
+	if code := <-done; code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if n := f.Received.Load(); n != 0 {
+		t.Fatalf("%d requests reached the server", n)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "events.jsonl"))
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	var stop map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &stop); err != nil {
+		t.Fatal(err)
+	}
+	if stop["event"] != "stop" || stop["reason"] != load.ReasonTerminated {
+		t.Fatalf("%v", stop)
 	}
 }
 

@@ -306,7 +306,13 @@ func TestTransportErrorAndConnectWhenDown(t *testing.T) {
 
 	res := make(chan Result, 1)
 	go func() { res <- c.Infer(context.Background(), body, 10*time.Second, nil) }()
-	<-f.inflight
+	select {
+	case <-f.inflight:
+	case r := <-res:
+		t.Fatalf("the request never reached the server: Infer returned %s", r.Status.Label())
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request never reached the server")
+	}
 	b.stop() // the connection dies mid-flight
 	select {
 	case r := <-res:
@@ -325,6 +331,17 @@ func TestTransportErrorAndConnectWhenDown(t *testing.T) {
 	r := c.Infer(context.Background(), body, 10*time.Second, nil)
 	if r.Status != StatusConnect || time.Since(start) > 100*time.Millisecond || r.TReady != 0 || r.TSend != 0 {
 		t.Fatalf("got %s %+v after %v", r.Status.Label(), r, time.Since(start))
+	}
+}
+
+func TestWaitReadyImpliesReady(t *testing.T) {
+	b := newBufServer(t, &fake{reply: response(1, 4)})
+	for i := range 200 {
+		c := newConn(t, b, nil)
+		waitReady(t, c)
+		if !c.Ready() {
+			t.Fatalf("conn %d: WaitReady returned but Ready() is false (state %s)", i, c.State())
+		}
 	}
 }
 

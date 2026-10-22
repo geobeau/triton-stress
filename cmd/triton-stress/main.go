@@ -5,7 +5,8 @@
 // returned, until the ramp reaches its maximum, --duration ends, a guard trips or a signal
 // arrives. It writes intervals.csv, events.jsonl (and requests.csv with
 // --request-log-every) under --out-dir, one JSON line per tick on stdout, and Prometheus
-// metrics on --metrics-addr. Human-readable messages go to stderr.
+// metrics on --metrics-addr. With --control-addr it waits for POST /start before sending.
+// Human-readable messages go to stderr.
 package main
 
 import (
@@ -21,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/criteo/triton-stress/internal/control"
 	"github.com/criteo/triton-stress/internal/grpcclient"
 	"github.com/criteo/triton-stress/internal/h1client"
 	"github.com/criteo/triton-stress/internal/h2client"
@@ -147,10 +149,18 @@ func (c *clients) total() int {
 	return n
 }
 
-// execute does the startup (connections, metadata, payload pool) and runs the load. Its
-// error is fatal; a run that ends normally returns its stop reason and a nil error, after
-// writing its stop event.
+// execute does the startup (connections, metadata, payload pool) and runs the load, after
+// POST /start when --control-addr is set. Its error is fatal; a run that ends normally
+// returns its stop reason and a nil error, after writing its stop event.
 func execute(ctx context.Context, cfg *config, out *output.Files, stderr io.Writer) (string, error) {
+	var ctl *control.Server
+	if cfg.ControlAddr != "" {
+		var err error
+		if ctl, err = control.Serve(cfg.ControlAddr); err != nil {
+			return "", fmt.Errorf("control endpoint: %w", err)
+		}
+		defer func() { _ = ctl.Close() }()
+	}
 	var cl clients
 	defer cl.close()
 	var err error
@@ -186,6 +196,13 @@ func execute(ctx context.Context, cfg *config, out *output.Files, stderr io.Writ
 		printf(stderr, "triton-stress: metrics on http://%s/metrics\n", srv.Addr())
 	}
 	printf(stderr, "triton-stress: %d workers, %d connections\n", runner.Workers(), cl.total())
+	if ctl != nil {
+		ctl.SetReady()
+		printf(stderr, "triton-stress: waiting for POST /start on http://%s\n", ctl.Addr())
+		if err := ctl.Wait(ctx); err != nil {
+			return "", err
+		}
+	}
 	res, err := runner.Run(ctx)
 	return res.Reason, err
 }

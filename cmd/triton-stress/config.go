@@ -40,6 +40,7 @@ type config struct {
 	Guards          guard.Config
 	Interval        time.Duration
 	MetricsAddr     string // empty: disabled
+	ControlAddr     string // empty: disabled
 	OutDir          string // empty: runs/<UTC start>
 	RequestLogEvery uint64
 }
@@ -94,6 +95,7 @@ func parseConfig(args []string, stderr io.Writer) (*config, error) {
 	guardConsecutive := app.Flag("guard-consecutive", "Consecutive breaching ticks that trip a guard.").Default("3").Int()
 	interval := app.Flag("interval", "Tick length.").Default("1s").Duration()
 	metricsAddr := app.Flag("metrics-addr", "Prometheus listen address, or off.").Default("0.0.0.0:9095").String()
+	controlAddr := app.Flag("control-addr", "Control API listen address (GET /ready, POST /start); when set, the load waits for POST /start. off disables it.").Default("off").String()
 	outDir := app.Flag("out-dir", "Output directory (default runs/<UTC start>).").Default("").String()
 	requestLog := app.Flag("request-log-every", "Write one request in N to requests.csv (default off).").Default("0").String()
 
@@ -144,7 +146,7 @@ func parseConfig(args []string, stderr io.Writer) (*config, error) {
 	var err error
 	if err := c.parseLoad(*workers, *arrivalMode, *warmup, *startRate, *slope, *maxRate, *duration,
 		*guardAchieved, *guardErr, *guardLat, *guardDelay, *guardInflight, *guardConsecutive,
-		*interval, *metricsAddr, *outDir, *requestLog); err != nil {
+		*interval, *metricsAddr, *controlAddr, *outDir, *requestLog); err != nil {
 		return nil, err
 	}
 	if c.Gen, err = tensorgen.ParseDist(*gen); err != nil {
@@ -163,7 +165,7 @@ func parseConfig(args []string, stderr io.Writer) (*config, error) {
 // parseLoad fills in and validates the load flags.
 func (c *config) parseLoad(workers int, arrivalMode, warmup, startRate, slope, maxRate, duration,
 	gAchieved, gErr, gLat, gDelay, gInflight string, gConsecutive int, interval time.Duration,
-	metricsAddr, outDir, requestLog string) error {
+	metricsAddr, controlAddr, outDir, requestLog string) error {
 	if workers < 0 {
 		return errors.New("--workers must not be negative")
 	}
@@ -225,6 +227,9 @@ func (c *config) parseLoad(workers int, arrivalMode, warmup, startRate, slope, m
 	c.Interval = interval
 	if metricsAddr != "off" {
 		c.MetricsAddr = metricsAddr
+	}
+	if controlAddr != "off" {
+		c.ControlAddr = controlAddr
 	}
 	c.OutDir = outDir
 	if c.RequestLogEvery, err = units.ParseCount(requestLog); err != nil {

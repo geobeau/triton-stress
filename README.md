@@ -234,6 +234,7 @@ durations. Boolean flags also have a `--no-` form.
 | `--guard-consecutive` | `3` | Consecutive breaching ticks that trip a guard |
 | `--interval` | `1s` | Tick length |
 | `--metrics-addr` | `0.0.0.0:9095` | Prometheus listen address, or `off` |
+| `--control-addr` | `off` | Control API listen address (`GET /ready`, `POST /start`); when set, the load waits for `POST /start`. `off` disables it |
 | `--out-dir` | `runs/<UTC start>` | Output directory, relative to the working directory; start looks like `20261012T093837Z` |
 | `--request-log-every` | `0` (off) | Write one request in N to `requests.csv` (SI suffixes allowed) |
 
@@ -320,6 +321,19 @@ Timestamps are UTC epoch nanoseconds; a timestamp the request never reached is e
 tick `ts` values join directly with Triton-side samples. `ts` is the end of the tick, which covers the
 interval before it. The monotonic clock is re-anchored to UTC every tick, so a stepped wall clock only
 affects the tick in which it happens.
+
+## Control API
+
+`--control-addr` (default `off`) serves a small HTTP API so that several processes started against one server
+can begin together. When it is set, triton-stress finishes its startup (connections, model metadata, payload
+pool, metrics endpoint), then waits for `POST /start` before the warmup and the ramp begin. It prints
+`waiting for POST /start` on stderr. A signal while waiting is a normal end (reason `interrupted` or
+`terminated`, exit 0).
+
+| Endpoint | Meaning |
+|---|---|
+| `GET /ready` | `503` until the startup has finished, then `200`, including while the load runs. Use it as the Kubernetes readiness probe |
+| `POST /start` | `503` until the startup has finished (retry), then `200` and the load begins. A second call also returns `200` and does nothing. Other methods get `405` |
 
 ## Prometheus
 
@@ -440,6 +454,9 @@ No manifests or chart ship with triton-stress. Each GitHub release publishes the
   above 16.
 - **The metrics port**: `--metrics-addr` defaults to `0.0.0.0:9095`; expose it and add it to your
   Prometheus scrape configuration (protobuf format for native histograms).
+- **The control port**, to start several pods together: set `--control-addr 0.0.0.0:9096`, use
+  `GET /ready` as the readiness probe, and send `POST /start` to every pod once all are ready (see
+  [Control API](#control-api)).
 - **A volume for `--out-dir`**, so `intervals.csv` and `events.jsonl` survive the pod. Give each run
   its own directory: triton-stress refuses to reuse one that holds a previous run.
 - **Log shipping**: stdout is only JSON lines (one per tick, then the `stop` event), so it can be

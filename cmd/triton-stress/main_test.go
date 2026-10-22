@@ -138,7 +138,7 @@ func TestLoadFlagDefaults(t *testing.T) {
 		g.SendDelay.Max != time.Millisecond || *g.MaxInflight != 100000 || g.Consecutive != 3 {
 		t.Fatalf("%+v", g)
 	}
-	if c.Arrival != arrival.Constant || c.Interval != time.Second || c.MetricsAddr != "0.0.0.0:9095" || c.OutDir != "" ||
+	if c.Arrival != arrival.Constant || c.Interval != time.Second || c.MetricsAddr != "0.0.0.0:9095" || c.ControlAddr != "" || c.OutDir != "" ||
 		c.RequestLogEvery != 0 || c.Workers < 1 || c.Seed != 1 {
 		t.Fatalf("%+v", c)
 	}
@@ -148,7 +148,7 @@ func TestLoadFlags(t *testing.T) {
 	c, err := parse(t, "--model", "m", "--workers", "3", "--arrival", "poisson", "--seed", "5", "--warmup", "5s",
 		"--start-rate", "20k", "--slope", "0", "--max-rate", "2M", "--duration", "30s", "--guard-achieved", "off",
 		"--guard-error-rate", "0.5", "--guard-latency", "p99.9:2s", "--guard-send-delay", "off", "--guard-max-inflight", "off",
-		"--guard-consecutive", "5", "--interval", "500ms", "--metrics-addr", "off", "--out-dir", "/x/y", "--request-log-every", "100")
+		"--guard-consecutive", "5", "--interval", "500ms", "--metrics-addr", "off", "--control-addr", "0.0.0.0:9096", "--out-dir", "/x/y", "--request-log-every", "100")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestLoadFlags(t *testing.T) {
 		c.Schedule.Max != 2e6 || c.Schedule.Duration != 30*time.Second || c.Schedule.Warmup != 5*time.Second ||
 		g.Achieved != nil || *g.ErrorRate != 0.5 || g.Latency.Pct != 99.9 || g.Latency.Max != 2*time.Second ||
 		g.SendDelay != nil || g.MaxInflight != nil || g.Consecutive != 5 || c.Interval != 500*time.Millisecond ||
-		c.MetricsAddr != "" || c.OutDir != "/x/y" || c.RequestLogEvery != 100 {
+		c.MetricsAddr != "" || c.ControlAddr != "0.0.0.0:9096" || c.OutDir != "/x/y" || c.RequestLogEvery != 100 {
 		t.Fatalf("%+v", c)
 	}
 }
