@@ -55,6 +55,10 @@ const connectTimeout = 5 * time.Second
 // readBufSize is each connection's read buffer.
 const readBufSize = 4096
 
+// keepAliveIdle is the shortest idle time before a connection's first TCP keepalive
+// probe; each connection draws its own from [keepAliveIdle, 2*keepAliveIdle].
+const keepAliveIdle = 15 * time.Second  // net.Dialer default value
+
 // Options configures a Group.
 type Options struct {
 	// Target is host:port; without a port it is 80 (443 with TLS).
@@ -433,7 +437,15 @@ func (c *conn) dial(ctx context.Context) (net.Conn, error) {
 	if g.o.Dialer != nil {
 		nc, err = g.o.Dialer(ctx, g.addr)
 	} else {
-		var d net.Dialer
+		// All the connections are dialled at once and most stay idle (the idle stack reuses
+		// the last connection freed), so with Go's fixed 15 s default they all probed in the
+		// same second, every 15 s. This can have a signiifcant impact if a large number
+		// of concurrent connections are open, even if not used.
+		// A randomly shifted per-connection idle time spreads the probes out.
+		d := net.Dialer{KeepAliveConfig: net.KeepAliveConfig{
+			Enable: true,
+			Idle:   keepAliveIdle + rand.N(keepAliveIdle),
+		}}
 		nc, err = d.DialContext(ctx, "tcp", g.addr)
 	}
 	if err != nil {

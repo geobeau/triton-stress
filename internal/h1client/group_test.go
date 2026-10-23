@@ -15,6 +15,7 @@ import (
 
 	"github.com/criteo/triton-stress/internal/clock"
 	"github.com/criteo/triton-stress/internal/grpcclient"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/connectivity"
 )
 
@@ -703,5 +704,48 @@ func TestManyRequests(t *testing.T) {
 	wg.Wait()
 	if bad.Load() != 0 || done.Load() != n {
 		t.Fatalf("bad %d done %d", bad.Load(), done.Load())
+	}
+}
+
+func TestKeepAliveIdleIsSpread(t *testing.T) {
+	s := newServer(t, func(nc net.Conn, br *bufio.Reader, _ int) { _, _ = io.Copy(io.Discard, br) })
+	idx := make([]int, 32)
+	for i := range idx {
+		idx[i] = i
+	}
+	g, err := NewGroup(Options{Target: s.addr()}, idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = g.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := g.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int]bool{}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, c := range g.conns {
+		rc, err := c.nc.(*net.TCPConn).SyscallConn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var on, idle int
+		var serr error
+		if err := rc.Control(func(fd uintptr) {
+			if on, serr = unix.GetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_KEEPALIVE); serr == nil {
+				idle, serr = unix.GetsockoptInt(int(fd), unix.IPPROTO_TCP, unix.TCP_KEEPIDLE)
+			}
+		}); err != nil || serr != nil {
+			t.Fatal(err, serr)
+		}
+		if on == 0 || idle < 15 || idle > 30 {
+			t.Fatalf("keepalive on=%d idle=%ds, want on and idle in [15, 30] (whole seconds, rounded up)", on, idle)
+		}
+		seen[idle] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("all %d connections share the keepalive idle time %v", len(g.conns), seen)
 	}
 }
